@@ -40,26 +40,25 @@ void callback(char*, byte*, unsigned int);  //MQTT callback func
 void reconnect(void);     //reconnect to MQTT
 void Relay_setup(void);
 void mqtt_subscribe(void);
+void relay_on(byte);
+void relay_off(byte);
 
 /****************Control Variables ******************************/
 
 //Relay Pins
-#define RELAY_PIN_1     12
-#define RELAY_PIN_2     14
-#define RELAY_PIN_3     5
-#define RELAY_PIN_4     4
+#define RELAY_PIN_1     GPIO_12
+#define RELAY_PIN_2     GPIO_14
+#define RELAY_PIN_3     GPIO_5
+#define RELAY_PIN_4     GPIO_4
 
 
 /************ Timers Variables ************************************/
 unsigned long startMillis;  //Some global vaiable anywhere in program
 unsigned long currentMillis;
-volatile byte temp_humd_timer = 30;  // In 10 secs multiple //1 min timer
-volatile byte temp_humd_timer_elapsed = false;
-volatile byte occupancy_timer_elapsed = false;
-volatile byte energy_timer_elapsed = false;
 volatile byte ten_sec_counter = 0;
-volatile byte occupancy_timer = 6;
-volatile byte energy_timer = 6;   // 1 min
+volatile byte wifi_reconnect_interval = 3;
+volatile bool wifi_reconnect_elapsed = false;
+volatile bool boot_flag = false;
 
 /************ NRF Variables ************************************/
 /*************NRF24************************/
@@ -81,18 +80,31 @@ void setup() {
 
   WiFiManager wifiManager;
   wifiManager.setConfigPortalTimeout(180);
-  wifiManager.autoConnect("Flop ESP", "espflopflop");
+  wifiManager.autoConnect("Four Relay", "espflopflop");
   //wifiManager.setSTAStaticIPConfig(IPAddress(192,168,1,150), IPAddress(192,168,1,1), IPAddress(255,255,255,0)); // optional DNS 4th argument
   //wifiManager.resetSettings();    //Uncomment to reset the Wifi Manager
 
   while (WiFi.status() != WL_CONNECTED) {
-    Serial.println("Connection Failed! Rebooting...");
-    delay(5000);
-    ESP.restart();
+   if(boot_flag == false) // First Boot
+    {
+      Serial.println("Connection Failed! Rebooting...");
+      delay(5000);
+      ESP.restart();
+    }
+    else   //Not first boot
+    {
+     
+      //Recursively call the setup func
+      setup();
+    }
   }
 
+  //Auto reconnect and Persistent  -> to auto reconenct in lost wifi connection
+  WiFi.setAutoReconnect(true);
+  WiFi.persistent(true);
+
   // Hostname defaults to esp8266-[ChipID]
-  ArduinoOTA.setHostname("My Switch");
+  ArduinoOTA.setHostname("Four_relay");
 
   // Password can be set with it's md5 value as well
   // MD5(admin) = 21232f297a57a5a743894a0e4a801fc3
@@ -146,13 +158,21 @@ void setup() {
 
   /* Basic Setup */
  
-  Relay_setup();
+  if(boot_flag == false)
+  {
+    /* Basic Setup */
+    Relay_setup();
 
-  /* NRF Setup */
 
+    //  //Timer start
+    startMillis = millis();
+  }
 
-  //  //Timer start
-  startMillis = millis();
+  //First boot
+  if(boot_flag == false)
+  {
+    boot_flag = true;
+  }
 
 }
 
@@ -163,12 +183,12 @@ void loop() {
   ArduinoOTA.handle();
   /*****OTA Ends **************/
 
-  /* Wifi Stuff */
-   if (WiFi.status() != WL_CONNECTED) {
-    Serial.println("Connection Failed! Rebooting...");
-    delay(5000);
-    ESP.restart();
-  }
+  // /* Wifi Stuff */
+  //  if (WiFi.status() != WL_CONNECTED) {
+  //   Serial.println("Connection Failed! Rebooting...");
+  //   delay(5000);
+  //   ESP.restart();
+  // }
   connected = client.connected();
   if (!connected) {
     #ifdef RASP_MQTT
@@ -217,52 +237,52 @@ void callback(char* topic, byte* payload, unsigned int length)
   {
     if(f_value == 1)
     {
-      //ON command
-       digitalWrite(RELAY_PIN_1, LOW);
+       //ON command
+        relay_on(RELAY_PIN_1);
     }
     else
     {
-      //Off command
-      digitalWrite(RELAY_PIN_1, HIGH);
+      //OFF Command
+        relay_off(RELAY_PIN_1);
     }
   }
   else if(strcmp(topic,SWITCH_2_TOPIC) == 0)
   {
     if(f_value == 1)
     {
-      //ON command
-      digitalWrite(RELAY_PIN_2, LOW);
+       //ON command
+        relay_on(RELAY_PIN_2);
     }
     else
     {
-      //Off command
-      digitalWrite(RELAY_PIN_2, HIGH);
+      //OFF Command
+        relay_off(RELAY_PIN_2);
     }
   }
   else if(strcmp(topic,SWITCH_3_TOPIC) == 0)
   {
     if(f_value == 1)
     {
-       //ON command
-      digitalWrite(RELAY_PIN_3, LOW);
+        //ON command
+        relay_on(RELAY_PIN_3);
     }
     else
     {
-		//Off command
-      digitalWrite(RELAY_PIN_3, HIGH);
+		//OFF Command
+        relay_off(RELAY_PIN_3);
     }
   }
   else if(strcmp(topic,SWITCH_4_TOPIC) == 0)
   {
     if(f_value == 1)
     {
-       //ON command
-      digitalWrite(RELAY_PIN_4, LOW);
+        //ON command
+        relay_on(RELAY_PIN_4);
     }
     else
     {
-		//Off command
-      digitalWrite(RELAY_PIN_4, HIGH);
+		//OFF Command
+        relay_off(RELAY_PIN_4);
     }
   }
 
@@ -300,23 +320,39 @@ void reconnect() {
 }
 #else
 void reconnect() {
-  // Loop until we're reconnected
-  while (!client.connected()) {
-    Serial.println("Attempting MQTT connection...");
+  if(WiFi.status() != WL_CONNECTED && wifi_reconnect_elapsed == true)
+  {
+    //Wifi is not connected 
+    Serial.println("Reconnecting to WiFi...");
+    //WiFi.disconnect();
+    //WiFi.reconnect();
+    setup();
+    wifi_reconnect_elapsed = false;
+
+  }
+  else if(WiFi.status() == WL_CONNECTED)
+  {
+    //Wifi is connected
+     // Loop until we're reconnected
+    while (!client.connected()) {
+      Serial.println("Attempting MQTT connection...");
     
-    // Attempt to connect
-    if (client.connect(MQTT_CLIENT_NAME, TOKEN,"")) {
-      Serial.println("connected");
-    } else {
-      Serial.print("failed, rc=");
-      Serial.print(client.state());
-      Serial.println(" try again in 2 seconds");
-      // Wait 2 seconds before retrying
-      delay(2000);
+      // Attempt to connect
+      if (client.connect(MQTT_CLIENT_NAME, TOKEN,"")) {
+        Serial.println("connected");
+      } else {
+        Serial.print("failed, rc=");
+        Serial.print(client.state());
+        Serial.println(" try again in 2 seconds");
+        // Wait 2 seconds before retrying
+        delay(2000);
+      }
     }
   }
 }
 #endif
+
+
 void timer_function()
 {
   currentMillis = millis();  //get the current "time" (actually the number of milliseconds since the program started)
@@ -325,18 +361,16 @@ void timer_function()
     startMillis = currentMillis;
     ten_sec_counter++;
 
-    if ((ten_sec_counter % occupancy_timer) == 0)
-    {
-      occupancy_timer_elapsed = true;
-    }
-    if((ten_sec_counter % energy_timer) == 0)
-    {
-      energy_timer_elapsed = true;
-    }
-    if ((ten_sec_counter % temp_humd_timer) == 0) //test whether the period has elapsed
+   
+    if ((ten_sec_counter % wifi_reconnect_interval) == 0) //test whether the period has elapsed
     {
       //temp_humd_timer_elapsed = true;
       ten_sec_counter = 0;  //IMPORTANT to save the start time of the current LED state.
+      if(WiFi.status() != WL_CONNECTED)
+      {
+           wifi_reconnect_elapsed = true;
+      }
+     
     }
   }
 
@@ -345,37 +379,114 @@ void timer_function()
 
 
 
-
-
 void Relay_setup()
 {
   //define relay pins and their state
   pinMode(RELAY_PIN_1, OUTPUT);
-  digitalWrite(RELAY_PIN_1, HIGH);
+  #ifdef OPTO_COUPLER
+  if(RELAY_PIN_1 != GPIO_16)
+  {
+     digitalWrite(RELAY_PIN_1, HIGH);
+  }
+  else
+  {
+     digitalWrite(RELAY_PIN_1, LOW);
+  }
+ 
+  #else
+  if(RELAY_PIN_1 != GPIO_16)
+  {
+     digitalWrite(RELAY_PIN_1, LOW);
+  }
+  else
+  {
+     digitalWrite(RELAY_PIN_1, HIGH);
+  }
+  #endif
+
   pinMode(RELAY_PIN_2, OUTPUT);
-  digitalWrite(RELAY_PIN_2, HIGH);
+  #ifdef OPTO_COUPLER
+  if(RELAY_PIN_2 != GPIO_16)
+  {
+     digitalWrite(RELAY_PIN_2, HIGH);
+  }
+  else
+  {
+     digitalWrite(RELAY_PIN_2, LOW);
+  }
+ 
+  #else
+  if(RELAY_PIN_2 != GPIO_16)
+  {
+     digitalWrite(RELAY_PIN_2, LOW);
+  }
+  else
+  {
+     digitalWrite(RELAY_PIN_2, HIGH);
+  }
+  #endif
+
   pinMode(RELAY_PIN_3, OUTPUT);
-  digitalWrite(RELAY_PIN_3, HIGH);
+  #ifdef OPTO_COUPLER
+  if(RELAY_PIN_3 != GPIO_16)
+  {
+     digitalWrite(RELAY_PIN_3, HIGH);
+  }
+  else
+  {
+     digitalWrite(RELAY_PIN_3, LOW);
+  }
+ 
+  #else
+  if(RELAY_PIN_3 != GPIO_16)
+  {
+     digitalWrite(RELAY_PIN_3, LOW);
+  }
+  else
+  {
+     digitalWrite(RELAY_PIN_3, HIGH);
+  }
+  #endif
+
   pinMode(RELAY_PIN_4, OUTPUT);
-  digitalWrite(RELAY_PIN_4, HIGH);
+  #ifdef OPTO_COUPLER
+  if(RELAY_PIN_4 != GPIO_16)
+  {
+     digitalWrite(RELAY_PIN_4, HIGH);
+  }
+  else
+  {
+     digitalWrite(RELAY_PIN_4, LOW);
+  }
+ 
+  #else
+  if(RELAY_PIN_4 != GPIO_16)
+  {
+     digitalWrite(RELAY_PIN_4, LOW);
+  }
+  else
+  {
+     digitalWrite(RELAY_PIN_4, HIGH);
+  }
+  #endif
   
 }
 
 #ifndef RASP_MQTT
-void publish_data(char* device_label, char* variable_label, char* payload_data)
-{
-  sprintf(topic, "%s", ""); // Cleans the topic content
-  sprintf(topic, "%s%s", "/v1.6/devices/", device_label);
+// void publish_data(char* device_label, char* variable_label, char* payload_data)
+// {
+//   sprintf(topic, "%s", ""); // Cleans the topic content
+//   sprintf(topic, "%s%s", "/v1.6/devices/", device_label);
 
-  sprintf(payload, "%s", ""); //Cleans the payload
-  sprintf(payload, "{\"%s\":", variable_label); // Adds the variable label   
-  sprintf(payload, "%s {\"value\": %s", payload, payload_data); // Adds the value
-  sprintf(payload, "%s } }", payload); // Closes the dictionary brackets
+//   sprintf(payload, "%s", ""); //Cleans the payload
+//   sprintf(payload, "{\"%s\":", variable_label); // Adds the variable label   
+//   sprintf(payload, "%s {\"value\": %s", payload, payload_data); // Adds the value
+//   sprintf(payload, "%s } }", payload); // Closes the dictionary brackets
 
-  client.publish(topic, payload);
-  client.loop();
-  delay(1000);
-}
+//   client.publish(topic, payload);
+//   client.loop();
+//   delay(1000);
+// }
 void mqtt_subscribe()
 {
   //char *topicToSubscribe;
@@ -393,3 +504,51 @@ void mqtt_subscribe()
   client.subscribe(topic);
 }
 #endif
+void relay_on(byte pin){
+  #ifdef OPTO_COUPLER
+  if(pin != GPIO_16)
+  {
+    digitalWrite(pin, LOW);
+  }
+  else
+  {
+    digitalWrite(pin, HIGH);
+  }
+  #else
+  if(pin != GPIO_16)
+  {
+    //No inversion
+    digitalWrite(pin, HIGH);
+  }
+  else
+  {
+    //Inversion
+    digitalWrite(pin, LOW);
+  }
+  #endif
+}
+
+void relay_off(byte pin)
+{
+  #ifdef OPTO_COUPLER
+  if(pin != GPIO_16)
+  {
+    digitalWrite(pin, HIGH);
+  }
+  else
+  {
+    digitalWrite(pin, LOW);
+  }
+  #else
+  if(pin != GPIO_16)
+  {
+    //No inversion
+    digitalWrite(pin, LOW);
+  }
+  else
+  {
+    //Inversion
+    digitalWrite(pin, HIGH);
+  }
+  #endif
+}

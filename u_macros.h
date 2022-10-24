@@ -1,8 +1,22 @@
 #ifndef U_MACROS_H
 #define U_MACROS_H
 //#define RASP_MQTT       0
+#define OPTO_COUPLER
 
-#define TOKEN                       "B_B_F_F-wVdGoyx0wgM2LbvIbwhH6Bzo9lnfg6"    /* Remove the underscores while uploading */
+
+//GPIOS def
+#define GPIO_5                      5
+#define GPIO_4                      4
+#define GPIO_0                      0
+#define GPIO_2                      2
+#define GPIO_15                     15
+#define GPIO_16                     16
+#define GPIO_14                     14
+#define GPIO_12                     12
+#define GPIO_13                     13
+
+
+#define TOKEN                       "BBFF-wVdGoyx0wgM2LbvIbwhH6Bzo9lnfg6"    /* Remove the underscores while uploading */
 #define MQTT_CLIENT_NAME            "ESP07"
 /********** Control Variables *******************************/
 #ifdef RASP_MQTT
